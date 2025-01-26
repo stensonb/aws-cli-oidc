@@ -25,7 +25,10 @@ import (
 )
 
 const (
-	LocalhostIPAddress = "127.0.0.1"
+	LocalhostIPAddress    = "127.0.0.1"
+	QueryParamCode        = "code"
+	QueryParamRedirectUri = "redirect_uri"
+	QueryParamGrantType   = "grant_type"
 )
 
 func Authenticate(ctx context.Context, client *OIDCClient, roleArn string, maxSessionDurationSeconds int32, useSecret, asJson bool) error {
@@ -174,7 +177,7 @@ func getSAMLAssertion(ctx context.Context, client *OIDCClient, tokenResponse *ty
 
 	form := client.ClientForm()
 	form.Set("audience", audience)
-	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange")
+	form.Set(QueryParamGrantType, "urn:ietf:params:oauth:grant-type:token-exchange")
 	form.Set("subject_token", subjectToken)
 	form.Set("subject_token_type", subjectTokenType)
 	form.Set("requested_token_type", "urn:ietf:params:oauth:token-type:saml2")
@@ -294,9 +297,9 @@ func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, err
 	verifier := v.String()
 
 	authReq := client.Authorization().
-		QueryParam("response_type", "code").
+		QueryParam("response_type", QueryParamCode).
 		QueryParam("client_id", clientId).
-		QueryParam("redirect_uri", redirect).
+		QueryParam(QueryParamRedirectUri, redirect).
 		QueryParam("code_challenge", challenge).
 		QueryParam("code_challenge_method", "S256").
 		QueryParam("scope", "openid")
@@ -331,7 +334,7 @@ func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.Res
 		// we ensure this handler is only ever called once
 		m.Do(func() {
 			q := req.URL.Query()
-			code := q.Get("code")
+			code := q.Get(QueryParamCode)
 
 			res.Header().Set(ContentType, "text/html")
 
@@ -425,10 +428,10 @@ func launch(ctx context.Context, client *OIDCClient, url string, listener net.Li
 
 func codeToToken(ctx context.Context, client *OIDCClient, verifier string, code string, redirect string) (*types.TokenResponse, error) {
 	form := client.ClientForm()
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", code)
+	form.Set(QueryParamGrantType, "authorization_code")
+	form.Set(QueryParamCode, code)
 	form.Set("code_verifier", verifier)
-	form.Set("redirect_uri", redirect)
+	form.Set(QueryParamRedirectUri, redirect)
 
 	log.Traceln("code2token params: %v", form)
 
