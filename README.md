@@ -130,6 +130,22 @@ Using the `-s` option, the AWS temporary credentials will be saved into your OS 
 
 Please report them via https://github.com/stensonb/aws-cli-oidc/issues
 
+## Building and Releasing
+
+You must have [goreleaser](https://goreleaser.com/) installed and in your executable path.
+
+### Building
+
+`make build`
+
+### Releasing
+
+1. update `Makefile` on `main`:
+    1. update `Makefile` VERSION (honoring [semver](https://semver.org/))
+    2. submit PR
+    3. commit to `main`
+2. create tag and release binaries: `make release`
+
 ## Licence
 
 Licensed under the [MIT](/LICENSE) license.
