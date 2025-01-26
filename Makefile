@@ -1,9 +1,8 @@
 NAME := aws-cli-oidc
-VERSION := v0.6.0
-REVISION := $(shell git rev-parse --short HEAD)
+VERSION := $(shell git describe --tags --exact-match --match "v*.*.*" || git describe --match "v*.*.*" --tags || git describe --tags || git rev-parse HEAD)
 
 SRCS    := $(shell find . -type f -name '*.go')
-LDFLAGS := -ldflags="-s -w -X \"github.com/openstandia/aws-cli-oidc/version.Version=$(VERSION)\" -X \"github.com/openstandia/aws-cli-oidc/version.Revision=$(REVISION)\" -extldflags -static"
+LDFLAGS := -ldflags="-s -w -X \"github.com/stensonb/aws-cli-oidc/version.Version=$(VERSION)\" -extldflags -static"
 
 DIST_DIRS := find * -type d -exec
 
@@ -56,4 +55,3 @@ release:
 .PHONY: test
 test:
 	go test -cover -v
-

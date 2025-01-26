@@ -1,6 +1,13 @@
 # aws-cli-oidc
 
-CLI tool for retrieving AWS temporary credentials using OIDC provider.
+CLI tool for retrieving AWS temporary credentials using an OIDC provider.
+
+This is a fork of [https://github.com/openstandia/aws-cli-oidc](https://github.com/openstandia/aws-cli-oidc), updated with:
+
+* [AWS SDK for Go v2](https://github.com/aws/aws-sdk-go-v2)
+* [GitHub Dependabot](https://github.com/dependabot)
+* [golangci-lint](https://golangci-lint.run/)
+* many other improvements
 
 ## How does it work?
 
@@ -22,7 +29,7 @@ Please refer the following diagrams how it works.
 
 Before using this tool, the system administrator need to setup the following configuration.
 
-- Identity Federation using SAML2/OIDC between AWS and the OIDC provider. See https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html
+- Identity Federation using SAML2/OIDC between AWS and the OIDC provider. See https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html.
 - Registration OIDC/OAuth2 client for this CLI tool in the OIDC provider. Note: The OIDC provider must allow any port to be specified at the time of the request for loopback IP redirect URIs because this tool follows [RFC 8252 OAuth 2.0 for Native Apps 7.3 Loopback Interface Redirection](https://tools.ietf.org/html/rfc8252#section-7.3).
 
 Also depending on the federation type between AWS and the OIDC provider, requirements for the OIDC providers will change.
@@ -30,7 +37,7 @@ Also depending on the federation type between AWS and the OIDC provider, require
 ### Federation type: OIDC
 
 - The OIDC provider only needs to support OIDC. SAML2 and OAuth 2.0 Token Exchange are not necessary. Very simple.
-- However, the JWKS endpoint of the OIDC provider needs to export it to the Internet because AWS try to access the endpoint to obtain the public key and to verify the ID token which is issued by the provider.
+- However, the JWKS endpoint of the OIDC provider needs to exported to the Internet for AWS to access the endpoint. This is required to obtain the public key and to verify the ID token which is issued by the IdP.
 
 ### Federation type: SAML 2.0
 
@@ -43,12 +50,13 @@ Also depending on the federation type between AWS and the OIDC provider, require
 | ------------------------------------------------------------------------------ | ---- | ----------- |
 | [Google account](https://accounts.google.com/.well-known/openid-configuration) | OK   | -           |
 | [Keycloak](https://www.keycloak.org)                                           | OK   | OK (Note 1) |
+| [Dex IdP](https://github.com/dexidp/dex)                                       | OK   | Not tested  |
 
 - Note 1: You need to use Keycloak 12 or higher that supports exchanging from access token to SAML2 assertion. Also, you need to enable Token Exchange feature.
 
 ## Install
 
-Download from [Releases page](https://github.com/openstandia/aws-cli-oidc/releases).
+Download from [Releases page](https://github.com/stensonb/aws-cli-oidc/releases).
 
 ## Usage
 
@@ -60,13 +68,14 @@ Usage:
 
 Available Commands:
   clear-secret Clear OS secret store that saves AWS credentials
-  completion   generate the autocompletion script for the specified shell
+  completion   Generate the autocompletion script for the specified shell
   get-cred     Get AWS credentials and out to stdout
   help         Help about any command
   setup        Interactive setup of aws-cli-oidc
 
 Flags:
-  -h, --help   help for aws-cli-oidc
+  -h, --help      help for aws-cli-oidc
+  -v, --version   version for aws-cli-oidc
 
 Use "aws-cli-oidc [command] --help" for more information about a command.
 ```
@@ -96,20 +105,36 @@ export AWS_SESSION_TOKEN=FQoGZXIvYXdzENz.......
 
 ### Integrate aws-cli
 
-[Sourcing credentials with an external process](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html) describes how to integrate aws-cli with external tool.
-You can use `aws-cli-oidc` as the external process. Add the following lines to your `.aws/config` file.
+[Sourcing credentials with an external process](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html) describes how to integrate aws-cli with external tool. You can use `aws-cli-oidc` as the external process.
+
+For example, if your IdP, `myop`, has been setup as an [Identity Provider](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers.html) in the `123456789012` account, and the `arn:aws:iam::123456789012:role/developer` is configured to allow `AssumeRoleWithWebIdentity` from your IdP, you can authenticate with the `myop` provider, assuming the `arn:aws:iam::123456789012:role/developer` role for 12 hours, with an entry in your `.aws/config` file similar to:
 
 ```
 [profile foo-developer]
 credential_process=aws-cli-oidc get-cred -p myop -r arn:aws:iam::123456789012:role/developer -j -s -d 43200
 ```
 
-Caution: The AWS temporary credentials will be saved into your OS secret store by using `-s` option to reduce authentication each time you use `aws-cli` tool.
+Then, AWS CLI should work:
+```
+$ AWS_PROFILE=foo-developer aws sts get-caller-identity
+{
+    "UserId": "AROA1T2W4XNSWEI3BS69H:aws-cli-oidc",
+    "Account": "123456789012",
+    "Arn": "arn:aws:sts::123456789012:assumed-role/developer/aws-cli-oidc"
+}
+```
+
+Using the `-s` option, the AWS temporary credentials will be saved into your OS secret store. The next call to `aws-cli-oidc` with `-s` will attempt to reuse these credentials.
+
+## Bugs?
+
+Please report them via https://github.com/stensonb/aws-cli-oidc/issues
 
 ## Licence
 
 Licensed under the [MIT](/LICENSE) license.
 
-## Author
+## Authors
 
-- [Hiroyuki Wada](https://github.com/wadahiro)
+- [Bryan Stenson](https://github.com/stensonb)
+- [Hiroyuki Wada - github.com/wadahiro/aws-cli-oidc](https://github.com/wadahiro/aws-cli-oidc)

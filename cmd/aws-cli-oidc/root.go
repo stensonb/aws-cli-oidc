@@ -1,20 +1,23 @@
 package main
 
 import (
-	"github.com/openstandia/aws-cli-oidc/lib"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/stensonb/aws-cli-oidc/lib/config"
+	"github.com/stensonb/aws-cli-oidc/lib/log"
+	"github.com/stensonb/aws-cli-oidc/version"
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "aws-cli-oidc",
-	Short: "CLI tool for retrieving AWS temporary credentials using OIDC provider",
-	Long:  `CLI tool for retrieving AWS temporary credentials using OIDC provider`,
+	Use:     config.AWS_CLI_OIDC,
+	Short:   "CLI tool for retrieving AWS temporary credentials using OIDC provider",
+	Long:    `CLI tool for retrieving AWS temporary credentials using OIDC provider`,
+	Version: version.Version,
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		lib.Writeln(err.Error())
+		log.Exit(err)
 	}
 }
 
@@ -23,11 +26,11 @@ func init() {
 }
 
 func initConfig() {
-	viper.SetConfigFile(lib.ConfigPath() + "/config.yaml")
+	viper.SetConfigFile(config.ConfigPath() + "/config.yaml")
 
 	if err := viper.ReadInConfig(); err == nil {
-		lib.Writeln("Using config file: %s", viper.ConfigFileUsed())
+		log.Writeln("Using config file: %s", viper.ConfigFileUsed())
 	}
 
-	lib.IsTraceEnabled = false // TODO: configuable
+	log.IsTraceEnabled = false // TODO: configurable
 }

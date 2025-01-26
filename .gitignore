@@ -19,4 +19,4 @@ dist/
 *.key
 *.crt
 
-vendor/
+.vscode
