@@ -330,8 +330,7 @@ func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.Res
 	return func(res http.ResponseWriter, req *http.Request) {
 		// we ensure this handler is only ever called once
 		m.Do(func() {
-			url := req.URL
-			q := url.Query()
+			q := req.URL.Query()
 			code := q.Get("code")
 
 			res.Header().Set(ContentType, "text/html")
