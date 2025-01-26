@@ -1,0 +1,15 @@
+.DS_Store
+.credentials
+/dist
+/build
+/packages
+/release
+*_string.go
+.glide
+vendor
+/glide
+/package
+/stage
+coverage.txt
+.ctags
+.vscode

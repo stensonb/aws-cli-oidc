@@ -1,60 +1,63 @@
 package lib
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
+	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	input "github.com/natsukagami/go-input"
-	"github.com/pkg/errors"
+	"github.com/stensonb/aws-cli-oidc/lib/log"
+	"github.com/stensonb/aws-cli-oidc/lib/types"
 	"github.com/versent/saml2aws"
 )
 
-func GetCredentialsWithSAML(samlResponse string, durationSeconds int64, iamRoleArn string) (*AWSCredentials, error) {
+func GetCredentialsWithSAML(ctx context.Context, samlResponse string, durationSeconds int32, iamRoleArn string) (*types.AWSCredentials, error) {
 	role, err := selectAwsRole(samlResponse, iamRoleArn)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to assume role, please check you are permitted to assume the given role for the AWS service")
+		return nil, fmt.Errorf("failed to assume role, please check you are permitted to assume the given role for the AWS service: %w", err)
 	}
 
-	Writeln("Selected role: %s", role.RoleARN)
-	Writeln("Max Session Duration: %d seconds", durationSeconds)
+	log.Writeln("Selected role: %s", role.RoleARN)
+	log.Writeln("Max Session Duration: %d seconds", durationSeconds)
 
-	return loginToStsUsingRole(role, samlResponse, durationSeconds)
+	return loginToStsUsingRole(ctx, role, samlResponse, durationSeconds)
 }
 
 func selectAwsRole(samlResponse, iamRoleArn string) (*saml2aws.AWSRole, error) {
 	roles, err := saml2aws.ExtractAwsRoles([]byte(samlResponse))
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to extract aws roles from SAML Assertion")
+		return nil, fmt.Errorf("failed to extract AWS roles from SAML Assertion: %w", err)
 	}
 
 	if len(roles) == 0 {
-		return nil, errors.New("No roles to assume, check you are permitted to assume roles for the AWS service")
+		return nil, fmt.Errorf("no roles to assume, check you are permitted to assume roles for the AWS service: %w", err)
 	}
 
 	awsRoles, err := saml2aws.ParseAWSRoles(roles)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to parse aws roles")
+		return nil, fmt.Errorf("failed to parse AWS roles: %w", err)
 	}
 
-	return resolveRole(awsRoles, samlResponse, iamRoleArn)
+	return resolveRole(awsRoles, iamRoleArn)
 }
 
-func resolveRole(awsRoles []*saml2aws.AWSRole, samlAssertion, iamRoleArn string) (*saml2aws.AWSRole, error) {
+func resolveRole(awsRoles []*saml2aws.AWSRole, iamRoleArn string) (*saml2aws.AWSRole, error) {
 	var role = new(saml2aws.AWSRole)
 
 	if len(awsRoles) == 1 {
 		return awsRoles[0], nil
 	} else if len(awsRoles) == 0 {
-		return nil, errors.New("No roles available")
+		return nil, fmt.Errorf("no roles available")
 	}
 
-	Writeln("")
+	log.Writeln("")
 
 	for {
 		var err error
@@ -62,7 +65,7 @@ func resolveRole(awsRoles []*saml2aws.AWSRole, samlAssertion, iamRoleArn string)
 		if err == nil {
 			break
 		}
-		Writeln("Selecting role, try again. Error: %v", err)
+		log.Writeln("Selecting role, try again. Error: %v", err)
 	}
 
 	return role, nil
@@ -74,7 +77,7 @@ func promptForAWSRoleSelection(awsRoles []*saml2aws.AWSRole, iamRoleArn string) 
 
 	for _, role := range awsRoles {
 		if iamRoleArn == role.RoleARN {
-			Writeln("Selected default role: %s", iamRoleArn)
+			log.Writeln("Selected default role: %s", iamRoleArn)
 			return role, nil
 		}
 		roles[role.RoleARN] = role
@@ -82,7 +85,7 @@ func promptForAWSRoleSelection(awsRoles []*saml2aws.AWSRole, iamRoleArn string) 
 	}
 
 	if iamRoleArn != "" {
-		Writeln("Warning: You don't have the default role: %s", iamRoleArn)
+		log.Writeln("Warning: You don't have the default role: %s", iamRoleArn)
 	}
 
 	sort.Strings(roleOptions)
@@ -96,58 +99,69 @@ func promptForAWSRoleSelection(awsRoles []*saml2aws.AWSRole, iamRoleArn string) 
 		Reader: os.Stdin,
 	}
 
-	answer, _ := ui.Ask(fmt.Sprintf("Please choose the role [1-%d]:\n\n%s", len(awsRoles), showList), &input.Options{
+	answer, err := ui.Ask(fmt.Sprintf("Please choose the role [1-%d]:\n\n%s", len(awsRoles), showList), &input.Options{
 		Required: true,
 		Loop:     true,
 		ValidateFunc: func(s string) error {
 			i, err := strconv.Atoi(s)
 			if err != nil || i < 1 || i > len(awsRoles) {
-				return errors.New(fmt.Sprintf("Please choose the role [1-%d]", len(awsRoles)))
+				return fmt.Errorf("please choose the role [1-%d]", len(awsRoles))
 			}
 			return nil
 		},
 	})
-	i, _ := strconv.Atoi(answer)
+	if err != nil {
+		return nil, err
+	}
+
+	i, err := strconv.Atoi(answer)
+	if err != nil {
+		return nil, err
+	}
 
 	return roles[roleOptions[i-1]], nil
 }
 
-func loginToStsUsingRole(role *saml2aws.AWSRole, samlResponse string, durationSeconds int64) (*AWSCredentials, error) {
-	sess, err := session.NewSession()
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create session")
-	}
-
-	Traceln("SAMLReponse: %s", samlResponse)
+func loginToStsUsingRole(ctx context.Context, role *saml2aws.AWSRole, samlResponse string, durationSeconds int32) (*types.AWSCredentials, error) {
+	log.Traceln("SAMLReponse: %s", samlResponse)
 
 	b := base64.StdEncoding.EncodeToString([]byte(samlResponse))
 
-	svc := sts.New(sess)
+	// TODO make timeout configurable
+	loginCtx, loginCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer loginCancel()
 
-	Traceln("PrincipalARN: %s", role.PrincipalARN)
-	Traceln("RoleARN: %s", role.RoleARN)
+	cfg, err := config.LoadDefaultConfig(loginCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load credentials: %w", err)
+	}
+
+	svc := sts.NewFromConfig(cfg)
+
+	log.Traceln("PrincipalARN: %s", role.PrincipalARN)
+	log.Traceln("RoleARN: %s", role.RoleARN)
 
 	params := &sts.AssumeRoleWithSAMLInput{
 		PrincipalArn:    aws.String(role.PrincipalARN), // Required
 		RoleArn:         aws.String(role.RoleARN),      // Required
 		SAMLAssertion:   aws.String(b),                 // Required
-		DurationSeconds: aws.Int64(durationSeconds),
+		DurationSeconds: aws.Int32(durationSeconds),
 	}
 
-	Writeln("Requesting AWS credentials using SAML assertion")
+	log.Writeln("Requesting AWS credentials using SAML assertion")
 
-	resp, err := svc.AssumeRoleWithSAML(params)
+	resp, err := svc.AssumeRoleWithSAML(loginCtx, params)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to retrieve STS credentials using SAML")
+		return nil, fmt.Errorf("failed to retrieve STS credentials using SAML: %w", err)
 	}
 
-	Traceln("Got AWS credentials using SAML assertion")
+	log.Traceln("Got AWS credentials using SAML assertion")
 
-	return &AWSCredentials{
-		AWSAccessKey:    aws.StringValue(resp.Credentials.AccessKeyId),
-		AWSSecretKey:    aws.StringValue(resp.Credentials.SecretAccessKey),
-		AWSSessionToken: aws.StringValue(resp.Credentials.SessionToken),
-		PrincipalARN:    aws.StringValue(resp.AssumedRoleUser.Arn),
+	return &types.AWSCredentials{
+		AWSAccessKey:    *resp.Credentials.AccessKeyId,
+		AWSSecretKey:    *resp.Credentials.SecretAccessKey,
+		AWSSessionToken: *resp.Credentials.SessionToken,
+		PrincipalARN:    *resp.AssumedRoleUser.Arn,
 		Expires:         resp.Credentials.Expiration.Local(),
 	}, nil
 }

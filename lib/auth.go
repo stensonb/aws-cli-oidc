@@ -7,89 +7,98 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sts"
+	awsCfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/beevik/etree"
 	pkce "github.com/nirasan/go-oauth-pkce-code-verifier"
 	"github.com/pkg/browser"
-	"github.com/pkg/errors"
+	"github.com/stensonb/aws-cli-oidc/lib/config"
+	"github.com/stensonb/aws-cli-oidc/lib/log"
+	"github.com/stensonb/aws-cli-oidc/lib/secretstore"
+	"github.com/stensonb/aws-cli-oidc/lib/types"
 )
 
-func Authenticate(client *OIDCClient, roleArn string, maxSessionDurationSeconds int64, useSecret, asJson bool) {
+const (
+	LocalhostIPAddress = "127.0.0.1"
+)
+
+func Authenticate(ctx context.Context, client *OIDCClient, roleArn string, maxSessionDurationSeconds int32, useSecret, asJson bool) error {
 	// Resolve target IAM Role ARN
-	defaultIAMRoleArn := client.config.GetString(DEFAULT_IAM_ROLE_ARN)
+	defaultIAMRoleArn := client.config.GetString(config.DEFAULT_IAM_ROLE_ARN)
 	if roleArn == "" {
 		roleArn = defaultIAMRoleArn
 	}
 
-	var awsCreds *AWSCredentials
+	var awsCreds *types.AWSCredentials
 	var err error
+
+	ss, err := secretstore.NewSecretStore(ctx, "")
+	if err != nil {
+		return err
+	}
 
 	// Try to reuse stored credential in secret
 	if useSecret {
-		awsCreds, err = AWSCredential(roleArn)
+		awsCreds, err = ss.AWSCredential(roleArn)
 	}
 
-	if !isValid(awsCreds) || err != nil {
-		tokenResponse, err := doLogin(client)
+	if !isValid(ctx, awsCreds) || err != nil {
+		tokenResponse, err := doLogin(ctx, client)
 		if err != nil {
-			Writeln("Failed to login the OIDC provider")
-			Exit(err)
+			return fmt.Errorf("failed to login the OIDC provider: %w", err)
 		}
 
-		Writeln("Login successful!")
-		Traceln("ID token: %s", tokenResponse.IDToken)
+		log.Writeln("Login successful!")
+		log.Traceln("ID token: %s", tokenResponse.IDToken)
 
-		awsFedType := client.config.GetString(AWS_FEDERATION_TYPE)
+		awsFedType := client.config.GetString(config.AWS_FEDERATION_TYPE)
 
 		// Resolve max duration
 		if maxSessionDurationSeconds <= 0 {
-			maxSessionDurationSecondsString := client.config.GetString(MAX_SESSION_DURATION_SECONDS)
-			maxSessionDurationSeconds, err = strconv.ParseInt(maxSessionDurationSecondsString, 10, 64)
+			maxSessionDurationSecondsString := client.config.GetString(config.MAX_SESSION_DURATION_SECONDS)
+			parsedMaxSessionDurationSeconds, err := strconv.ParseInt(maxSessionDurationSecondsString, 10, 32)
+			maxSessionDurationSeconds = int32(parsedMaxSessionDurationSeconds)
 			if err != nil {
 				maxSessionDurationSeconds = 3600
 			}
 		}
 
-		if awsFedType == AWS_FEDERATION_TYPE_OIDC {
-			awsCreds, err = GetCredentialsWithOIDC(client, tokenResponse.IDToken, roleArn, maxSessionDurationSeconds)
+		if awsFedType == config.AWS_FEDERATION_TYPE_OIDC {
+			awsCreds, err = GetCredentialsWithOIDC(ctx, client, tokenResponse.IDToken, roleArn, maxSessionDurationSeconds)
 			if err != nil {
-				Writeln("Failed to get aws credentials with OIDC")
-				Exit(err)
+				return fmt.Errorf("failed to get AWS credentials with OIDC: %w", err)
 			}
-		} else if awsFedType == AWS_FEDERATION_TYPE_SAML2 {
-			samlAssertion, err := getSAMLAssertion(client, tokenResponse)
+		} else if awsFedType == config.AWS_FEDERATION_TYPE_SAML2 {
+			samlAssertion, err := getSAMLAssertion(ctx, client, tokenResponse)
 			if err != nil {
-				Writeln("Failed to get SAML2 assertion from OIDC provider")
-				Exit(err)
+				return fmt.Errorf("failed to get SAML2 assertion from OIDC provider: %w", err)
 			}
 
-			samlResponse, err := createSAMLResponse(client, samlAssertion)
+			samlResponse, err := createSAMLResponse(samlAssertion)
 			if err != nil {
-				Writeln("Failed to create SAML Response")
-				Exit(err)
+				return fmt.Errorf("failed to create SAML Response: %w", err)
 			}
 
-			awsCreds, err = GetCredentialsWithSAML(samlResponse, maxSessionDurationSeconds, roleArn)
+			awsCreds, err = GetCredentialsWithSAML(ctx, samlResponse, maxSessionDurationSeconds, roleArn)
 			if err != nil {
-				Writeln("Failed to get aws credentials with SAML2")
-				Exit(err)
+				return fmt.Errorf("failed to get AWS credentials with SAML2: %w", err)
 			}
 		} else {
-			Writeln("Invalid AWS federation type")
-			Exit(err)
+			return fmt.Errorf("invalid AWS federation type")
 		}
 
 		if useSecret {
 			// Store into secret
-			SaveAWSCredential(roleArn, awsCreds)
-			Write("The AWS credentials has been saved in OS secret store")
+			if err := ss.SaveAWSCredential(ctx, roleArn, awsCreds); err != nil {
+				return err
+			}
+			log.Write("The AWS credentials has been saved in OS secret store")
 		}
 	}
 
@@ -98,57 +107,68 @@ func Authenticate(client *OIDCClient, roleArn string, maxSessionDurationSeconds 
 
 		jsonBytes, err := json.Marshal(awsCreds)
 		if err != nil {
-			Writeln("Unexpected AWS credential response")
-			Exit(err)
+			return fmt.Errorf("failed to marshal AWS credential response to JSON: %w", err)
 		}
-		fmt.Println(string(jsonBytes))
+		_, err = fmt.Println(string(jsonBytes))
+		if err != nil {
+			return err
+		}
 	} else {
-		Writeln("")
+		log.Writeln("")
 
-		Export("AWS_ACCESS_KEY_ID", awsCreds.AWSAccessKey)
-		Export("AWS_SECRET_ACCESS_KEY", awsCreds.AWSSecretKey)
-		Export("AWS_SESSION_TOKEN", awsCreds.AWSSessionToken)
+		log.Export("AWS_ACCESS_KEY_ID", awsCreds.AWSAccessKey)
+		log.Export("AWS_SECRET_ACCESS_KEY", awsCreds.AWSSecretKey)
+		log.Export("AWS_SESSION_TOKEN", awsCreds.AWSSessionToken)
 	}
+
+	return nil
 }
 
-func isValid(cred *AWSCredentials) bool {
+func isValid(ctx context.Context, cred *types.AWSCredentials) bool {
 	if cred == nil {
 		return false
 	}
 
-	sess, err := session.NewSession()
+	gctx, gCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer gCancel()
+
+	cfg, err := awsCfg.LoadDefaultConfig(ctx,
+		awsCfg.WithRegion("aws-global"), // TODO: make configurable
+		awsCfg.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(
+				cred.AWSAccessKey,
+				cred.AWSSecretKey,
+				cred.AWSSessionToken,
+			),
+		),
+	)
 	if err != nil {
-		Writeln("Failed to create aws client session")
-		Exit(err)
+		log.Writeln("Failed to load credentials")
+		return false
 	}
 
-	creds := credentials.NewStaticCredentialsFromCreds(credentials.Value{
-		AccessKeyID:     cred.AWSAccessKey,
-		SecretAccessKey: cred.AWSSecretKey,
-		SessionToken:    cred.AWSSessionToken,
-	})
-
-	svc := sts.New(sess, aws.NewConfig().WithCredentials(creds))
+	svc := sts.NewFromConfig(cfg)
 
 	input := &sts.GetCallerIdentityInput{}
 
-	_, err = svc.GetCallerIdentity(input)
+	_, err = svc.GetCallerIdentity(gctx, input)
 
 	if err != nil {
-		Writeln("The previous credential isn't valid")
+		log.Writeln("The previous credential isn't valid")
+		return false
 	}
 
-	return err == nil
+	return true
 }
 
-func getSAMLAssertion(client *OIDCClient, tokenResponse *TokenResponse) (string, error) {
-	audience := client.config.GetString(OIDC_PROVIDER_TOKEN_EXCHANGE_AUDIENCE)
-	subjectTokenType := client.config.GetString(OIDC_PROVIDER_TOKEN_EXCHANGE_SUBJECT_TOKEN_TYPE)
+func getSAMLAssertion(ctx context.Context, client *OIDCClient, tokenResponse *types.TokenResponse) (string, error) {
+	audience := client.config.GetString(config.OIDC_PROVIDER_TOKEN_EXCHANGE_AUDIENCE)
+	subjectTokenType := client.config.GetString(config.OIDC_PROVIDER_TOKEN_EXCHANGE_SUBJECT_TOKEN_TYPE)
 
 	var subjectToken string
-	if subjectTokenType == TOKEN_TYPE_ID_TOKEN {
+	if subjectTokenType == config.TOKEN_TYPE_ID_TOKEN {
 		subjectToken = tokenResponse.IDToken
-	} else if subjectTokenType == TOKEN_TYPE_ACCESS_TOKEN {
+	} else if subjectTokenType == config.TOKEN_TYPE_ACCESS_TOKEN {
 		subjectToken = tokenResponse.AccessToken
 	}
 
@@ -162,68 +182,71 @@ func getSAMLAssertion(client *OIDCClient, tokenResponse *TokenResponse) (string,
 	res, err := client.Token().
 		Request().
 		Form(form).
-		Post()
+		Post(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to post form for token: %w", err)
+	}
 
-	Traceln("Exchanged SAML assertion response status: %d", res.Status())
+	log.Traceln("Exchanged SAML assertion response status: %d", res.Status())
 
-	if res.Status() != 200 {
+	if res.Status() != http.StatusOK {
 		if res.MediaType() != "" {
 			var json map[string]interface{}
 			err := res.ReadJson(&json)
 			if err == nil {
-				return "", errors.Errorf("Failed to exchange saml2 token, error: %s error_description: %s",
+				return "", fmt.Errorf("failed to exchange saml2 token, error: %s error_description: %s",
 					json["error"], json["error_description"])
 			}
 		}
-		return "", errors.Errorf("Failed to exchange saml2 token, statusCode: %d", res.Status())
+		return "", fmt.Errorf("failed to exchange saml2 token, statusCode: %d", res.Status())
 	}
 
-	var saml2TokenResponse *TokenResponse
+	var saml2TokenResponse *types.TokenResponse
 	err = res.ReadJson(&saml2TokenResponse)
 	if err != nil {
-		return "", errors.Wrap(err, "Failed to parse token exchange response")
+		return "", fmt.Errorf("failed to parse token exchange response: %w", err)
 	}
 
-	Traceln("SAML2 Assertion: %s", saml2TokenResponse.AccessToken)
+	log.Traceln("SAML2 Assertion: %s", saml2TokenResponse.AccessToken)
 
 	// TODO: Validation
 	return saml2TokenResponse.AccessToken, nil
 }
 
-func createSAMLResponse(client *OIDCClient, samlAssertion string) (string, error) {
+func createSAMLResponse(samlAssertion string) (string, error) {
 	s, err := base64.RawURLEncoding.DecodeString(samlAssertion)
 	if err != nil {
-		return "", errors.Wrap(err, "Failed to decode SAML2 assertion")
+		return "", fmt.Errorf("failed to decode SAML2 assertion: %w", err)
 	}
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(s); err != nil {
-		return "", errors.Wrap(err, "Parse error")
+		return "", fmt.Errorf("parse error: %w", err)
 	}
 
 	assertionElement := doc.FindElement(".//Assertion")
 	if assertionElement == nil {
-		return "", errors.New("No Assertion element")
+		return "", fmt.Errorf("no Assertion element")
 	}
 
 	issuerElement := assertionElement.FindElement("./Issuer")
 	if issuerElement == nil {
-		return "", errors.New("No Issuer element")
+		return "", fmt.Errorf("no Issuer element")
 	}
 
 	subjectConfirmationDataElement := doc.FindElement(".//SubjectConfirmationData")
 	if subjectConfirmationDataElement == nil {
-		return "", errors.New("No SubjectConfirmationData element")
+		return "", fmt.Errorf("no SubjectConfirmationData element")
 	}
 
 	recipient := subjectConfirmationDataElement.SelectAttr("Recipient")
 	if recipient == nil {
-		return "", errors.New("No Recipient attribute")
+		return "", fmt.Errorf("no Recipient attribute")
 	}
 
 	issueInstant := assertionElement.SelectAttr("IssueInstant")
 	if issueInstant == nil {
-		return "", errors.New("No IssueInstant attribute")
+		return "", fmt.Errorf("no IssueInstant attribute")
 	}
 
 	newDoc := etree.NewDocument()
@@ -234,7 +257,6 @@ func createSAMLResponse(client *OIDCClient, samlAssertion string) (string, error
 		samlp.CreateAttr("xmlns:"+assertionElement.Space, "urn:oasis:names:tc:SAML:2.0:assertion")
 	}
 	samlp.CreateAttr("Destination", recipient.Value)
-	// samlp.CreateAttr("ID", "ID_760649d5-ebe0-4d8a-a107-4a16dd3e9ecd")
 	samlp.CreateAttr("Version", "2.0")
 	samlp.CreateAttr("IssueInstant", issueInstant.Value)
 	samlp.AddChild(issuerElement.Copy())
@@ -245,25 +267,28 @@ func createSAMLResponse(client *OIDCClient, samlAssertion string) (string, error
 	assertionElement.RemoveAttr("xmlns:saml")
 	samlp.AddChild(assertionElement)
 
-	// newDoc.WriteTo(os.Stderr)
-
 	samlResponse, err := newDoc.WriteToString()
+	if err != nil {
+		return "", fmt.Errorf("failed to write samlResponse: %w", err)
+	}
 
 	return samlResponse, nil
 }
 
-func doLogin(client *OIDCClient) (*TokenResponse, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:")
+func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, error) {
+	// TODO: make ip address configurable
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:", LocalhostIPAddress))
 	if err != nil {
-		return nil, errors.Wrap(err, "Cannot start local http server to handle login redirect")
+		return nil, fmt.Errorf("cannot start local http server to handle login redirect: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 
-	clientId := client.config.GetString(CLIENT_ID)
-	redirect := fmt.Sprintf("http://127.0.0.1:%d", port)
+	clientId := client.config.GetString(config.CLIENT_ID)
+	redirect := fmt.Sprintf("http://%s:%d", LocalhostIPAddress, port)
+
 	v, err := pkce.CreateCodeVerifierWithLength(pkce.MaxLength)
 	if err != nil {
-		return nil, errors.Wrap(err, "Cannot generate OAuth2 PKCE code_challenge")
+		return nil, fmt.Errorf("cannot generate OAuth2 PKCE code_challenge: %w", err)
 	}
 	challenge := v.CodeChallengeS256()
 	verifier := v.String()
@@ -276,55 +301,57 @@ func doLogin(client *OIDCClient) (*TokenResponse, error) {
 		QueryParam("code_challenge_method", "S256").
 		QueryParam("scope", "openid")
 
-	additionalQuery := client.config.GetString(OIDC_AUTHENTICATION_REQUEST_ADDITIONAL_QUERY)
-	if additionalQuery != "" {
-		queries := strings.Split(additionalQuery, "&")
-		for _, q := range queries {
-			kv := strings.Split(q, "=")
-			if len(kv) == 1 {
-				authReq = authReq.QueryParam(kv[0], "")
-			} else if len(kv) == 2 {
-				authReq = authReq.QueryParam(kv[0], kv[1])
-			} else {
-				return nil, errors.Errorf("Invalid additional query: %s", q)
-			}
+	additionalQuery := client.config.GetString(config.OIDC_AUTHENTICATION_REQUEST_ADDITIONAL_QUERY)
+
+	// TODO: move additionalQuery validation somewhere else
+	u, err := url.ParseQuery(additionalQuery)
+	if err != nil {
+		return nil, fmt.Errorf("invalid additional query: %s : %w", additionalQuery, err)
+	}
+	for k, vals := range u {
+		for _, v := range vals {
+			authReq.QueryParam(k, v)
 		}
 	}
-	url := authReq.Url()
 
-	code := launch(client, url.String(), listener)
-	if code != "" {
-		return codeToToken(client, verifier, code, redirect)
-	} else {
-		return nil, errors.New("Login failed, can't retrieve authorization code")
+	launchUrl := authReq.Url()
+
+	code, err := launch(ctx, client, launchUrl.String(), listener)
+	if err != nil {
+		return nil, fmt.Errorf("login failed, can't retrieve authorization code: %w", err)
 	}
+
+	return codeToToken(ctx, client, verifier, code, redirect)
 }
 
-func launch(client *OIDCClient, url string, listener net.Listener) string {
-	c := make(chan string)
+var m sync.Mutex
 
-	http.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
+func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.ResponseWriter, req *http.Request) {
+	return func(res http.ResponseWriter, req *http.Request) {
+		// lock here to only handle requests serially (and only once)
+		defer m.Unlock()
+		m.Lock()
+
 		url := req.URL
 		q := url.Query()
 		code := q.Get("code")
 
-		res.Header().Set("Content-Type", "text/html")
+		res.Header().Set(ContentType, "text/html")
 
 		// Redirect to user-defined successful/failure page
 		successful := client.RedirectToSuccessfulPage()
 		if successful != nil && code != "" {
 			url := successful.Url()
-			res.Header().Set("Location", (&url).String())
-			res.WriteHeader(302)
+			res.Header().Set("Location", url.String())
+			res.WriteHeader(http.StatusFound)
 		}
 		failure := client.RedirectToFailurePage()
 		if failure != nil && code == "" {
 			url := failure.Url()
-			res.Header().Set("Location", (&url).String())
-			res.WriteHeader(302)
+			res.Header().Set("Location", url.String())
+			res.WriteHeader(http.StatusFound)
 		}
 
-		// Response result page
 		message := "Login "
 		if code != "" {
 			message += "successful"
@@ -333,83 +360,102 @@ func launch(client *OIDCClient, url string, listener net.Listener) string {
 		}
 		res.Header().Set("Cache-Control", "no-store")
 		res.Header().Set("Pragma", "no-cache")
-		res.WriteHeader(200)
-		res.Write([]byte(fmt.Sprintf(`<!DOCTYPE html>
-<body>
-%s
-</body>
-</html>
-`, message)))
+		res.WriteHeader(http.StatusOK)
+		_, e := res.Write([]byte(fmt.Sprintf("<!DOCTYPE html><body>%s</body></html>", message)))
+		if e != nil {
+			err <- e
+		}
 
 		if f, ok := res.(http.Flusher); ok {
 			f.Flush()
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		if code == "" {
+			err <- fmt.Errorf("failed to get code")
+		} else {
+			c <- code
+		}
+	}
+}
 
-		c <- code
-	})
+type codeChan chan string
+type errChan chan error
+
+func launch(ctx context.Context, client *OIDCClient, url string, listener net.Listener) (string, error) {
+	loginCtx, loginCancel := context.WithTimeout(ctx, 3*time.Minute) // TODO: make login timeout configurable
+	defer loginCancel()
+
+	c := make(chan string)
+	e := make(chan error, 2) // could get errors from handler and/or http server
 
 	srv := &http.Server{}
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	defer srv.Shutdown(ctx)
+	http.HandleFunc("/", buildHandler(client, c, e))
 
 	go func() {
+		defer func() {
+			close(c)
+			close(e)
+		}()
 		if err := srv.Serve(listener); err != nil {
-			// cannot panic, because this probably is an intentional close
+			e <- fmt.Errorf("failed to start local http server: %w", err)
 		}
 	}()
 
+	err := browser.OpenURL(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to openurl: %w", err)
+	}
+
 	var code string
-	if err := browser.OpenURL(url); err == nil {
-		code = <-c
+	var handlerErr error
+
+	select {
+	case <-loginCtx.Done():
+		return "", fmt.Errorf("login timed out: %w", loginCtx.Err())
+	case code = <-c:
+	case handlerErr = <-e:
 	}
 
-	return code
+	// no need to shutdown cleanly; just quickly
+	if err := srv.Close(); err != nil {
+		return "", fmt.Errorf("failed to shutdown server: %w", err)
+	}
+
+	return code, handlerErr
+
 }
 
-func GetFreePort() (int, error) {
-	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
-func codeToToken(client *OIDCClient, verifier string, code string, redirect string) (*TokenResponse, error) {
+func codeToToken(ctx context.Context, client *OIDCClient, verifier string, code string, redirect string) (*types.TokenResponse, error) {
 	form := client.ClientForm()
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("code_verifier", verifier)
 	form.Set("redirect_uri", redirect)
 
-	Traceln("code2token params:", form)
+	log.Traceln("code2token params: %v", form)
 
-	res, err := client.Token().Request().Form(form).Post()
+	res, err := client.Token().Request().Form(form).Post(ctx)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to turn code into token")
+		return nil, fmt.Errorf("failed to turn code into token: %w", err)
 	}
 
-	if res.Status() != 200 {
+	if res.Status() != http.StatusOK {
 		if res.MediaType() != "" {
 			var json map[string]interface{}
 			err := res.ReadJson(&json)
 			if err == nil {
-				return nil, errors.Errorf("Failed to turn code into token, error: %s error_description: %s",
+				return nil, fmt.Errorf("failed to turn code into token, error: %s error_description: %s",
 					json["error"], json["error_description"])
 			}
 		}
-		return nil, errors.Errorf("Failed to turn code into token")
+		return nil, fmt.Errorf("failed to turn code into token")
 	}
 
-	var tokenResponse TokenResponse
-	res.ReadJson(&tokenResponse)
+	var tokenResponse types.TokenResponse
+	if err := res.ReadJson(&tokenResponse); err != nil {
+		return nil, err
+	}
+
 	return &tokenResponse, nil
 }

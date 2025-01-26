@@ -1,19 +1,18 @@
 package lib
 
 import (
+	"context"
+	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
-
-	"github.com/pkg/errors"
+	"strings"
 
 	input "github.com/natsukagami/go-input"
 	"github.com/spf13/viper"
+	"github.com/stensonb/aws-cli-oidc/lib/config"
 )
-
-type RESTClient struct {
-	client *RestClient
-}
 
 type OIDCMetadataResponse struct {
 	Issuer                                     string   `json:"issuer"`
@@ -51,86 +50,98 @@ type OIDCClient struct {
 	metadata   *OIDCMetadataResponse
 }
 
-func CheckInstalled(name string) (*OIDCClient, error) {
+func CheckInstalled(ctx context.Context, name string) (*OIDCClient, error) {
 	ui := &input.UI{
 		Writer: os.Stdout,
 		Reader: os.Stdin,
 	}
 
-	return InitializeClient(ui, name)
+	return InitializeClient(ctx, ui, name)
 }
 
-func InitializeClient(ui *input.UI, name string) (*OIDCClient, error) {
-	config := viper.Sub(name)
-	if config == nil {
-		answer, _ := ui.Ask("OIDC provider URL is not set. Do you want to setup the configuration? [Y/n]", &input.Options{
-			Default: "Y",
-			Loop:    true,
+func InitializeClient(ctx context.Context, ui *input.UI, name string) (*OIDCClient, error) {
+	cfg := viper.Sub(name)
+	if cfg == nil {
+		answer, err := ui.Ask("OIDC provider URL is not set. Do you want to setup the configuration? [Y/n]", &input.Options{
+			Default:  "y",
+			Loop:     true,
+			Required: true,
 			ValidateFunc: func(s string) error {
-				if s != "Y" && s != "n" {
-					return errors.New("Input must be Y or n")
+				if strings.ToLower(s) != "y" && strings.ToLower(s) != "n" {
+					return fmt.Errorf("must be y or n")
 				}
 				return nil
 			},
 		})
-		if answer == "n" {
-			return nil, errors.New("Failed to initialize client because of no OIDC provider URL")
+		if err != nil {
+			return nil, err
 		}
-		RunSetup(ui)
+
+		if strings.ToLower(answer) != "y" {
+			return nil, fmt.Errorf("failed to initialize client because of no OIDC provider URL")
+		}
+
+		if err := RunSetup(ui); err != nil {
+			return nil, err
+		}
 	}
-	providerURL := config.GetString(OIDC_PROVIDER_METADATA_URL)
-	insecure, err := strconv.ParseBool(config.GetString(INSECURE_SKIP_VERIFY))
+
+	providerURL := cfg.GetString(config.OIDC_PROVIDER_METADATA_URL)
+	insecure, err := strconv.ParseBool(cfg.GetString(config.INSECURE_SKIP_VERIFY))
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to parse insecure_skip_verify option in the config")
+		return nil, fmt.Errorf("failed to parse insecure_skip_verify option in the config: %w", err)
 	}
 
 	restClient, err := NewRestClient(&RestClientConfig{
-		ClientCert:         config.GetString(CLIENT_AUTH_CERT),
-		ClientKey:          config.GetString(CLIENT_AUTH_KEY),
-		ClientCA:           config.GetString(CLIENT_AUTH_CA),
+		ClientCert:         cfg.GetString(config.CLIENT_AUTH_CERT),
+		ClientKey:          cfg.GetString(config.CLIENT_AUTH_KEY),
+		ClientCA:           cfg.GetString(config.CLIENT_AUTH_CA),
 		InsecureSkipVerify: insecure,
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to initialize HTTP client for the OIDC provider")
+		return nil, fmt.Errorf("failed to initialize HTTP client for the OIDC provider: %w", err)
 	}
+
 	base := restClient.Target(providerURL)
-	res, err := base.Request().Get()
 
+	res, err := base.Request().Get(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get OIDC metadata")
+		return nil, fmt.Errorf("failed to get OIDC metadata: %w", err)
 	}
 
-	if res.Status() != 200 {
+	if res.Status() != http.StatusOK {
 		if res.MediaType() != "" {
 			var json map[string]interface{}
 			err := res.ReadJson(&json)
 			if err == nil {
-				return nil, errors.Errorf("Failed to get OIDC metadata, error: %s error_description: %s",
+				return nil, fmt.Errorf("failed to get OIDC metadata, error: %s error_description: %s",
 					json["error"], json["error_description"])
 			}
 		}
-		return nil, errors.Errorf("Failed to get OIDC metadata, statusCode: %d", res.Status())
+		return nil, fmt.Errorf("failed to get OIDC metadata, statusCode: %d", res.Status())
 	}
 
 	var metadata *OIDCMetadataResponse
+
 	err = res.ReadJson(&metadata)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to parse OIDC metadata response")
+		return nil, fmt.Errorf("failed to parse OIDC metadata response: %w", err)
 	}
 
-	client := &OIDCClient{restClient, base, config, metadata}
+	client := &OIDCClient{restClient, base, cfg, metadata}
 
 	if base == nil {
-		return nil, errors.New("Failed to initialize client")
+		return nil, fmt.Errorf("failed to initialize client: %w", err)
 	}
+
 	return client, nil
 }
 
 func (c *OIDCClient) ClientForm() url.Values {
 	form := url.Values{}
-	clientId := c.config.GetString(CLIENT_ID)
+	clientId := c.config.GetString(config.CLIENT_ID)
 	form.Set("client_id", clientId)
-	secret := c.config.GetString(CLIENT_SECRET)
+	secret := c.config.GetString(config.CLIENT_SECRET)
 	if secret != "" {
 		form.Set("client_secret", secret)
 	}
@@ -146,7 +157,7 @@ func (c *OIDCClient) Token() *WebTarget {
 }
 
 func (c *OIDCClient) RedirectToSuccessfulPage() *WebTarget {
-	url := c.config.GetString(SUCCESSFUL_REDIRECT_URL)
+	url := c.config.GetString(config.SUCCESSFUL_REDIRECT_URL)
 	if url == "" {
 		return nil
 	}
@@ -154,7 +165,7 @@ func (c *OIDCClient) RedirectToSuccessfulPage() *WebTarget {
 }
 
 func (c *OIDCClient) RedirectToFailurePage() *WebTarget {
-	url := c.config.GetString(FAILURE_REDIRECT_URL)
+	url := c.config.GetString(config.FAILURE_REDIRECT_URL)
 	if url == "" {
 		return nil
 	}
