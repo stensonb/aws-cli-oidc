@@ -324,57 +324,56 @@ func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, err
 	return codeToToken(ctx, client, verifier, code, redirect)
 }
 
-var m sync.Mutex
+var m sync.Once
 
 func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.ResponseWriter, req *http.Request) {
 	return func(res http.ResponseWriter, req *http.Request) {
-		// lock here to only handle requests serially (and only once)
-		defer m.Unlock()
-		m.Lock()
+		// we ensure this handler is only ever called once
+		m.Do(func() {
+			url := req.URL
+			q := url.Query()
+			code := q.Get("code")
 
-		url := req.URL
-		q := url.Query()
-		code := q.Get("code")
+			res.Header().Set(ContentType, "text/html")
 
-		res.Header().Set(ContentType, "text/html")
+			// Redirect to user-defined successful/failure page
+			successful := client.RedirectToSuccessfulPage()
+			if successful != nil && code != "" {
+				url := successful.Url()
+				res.Header().Set("Location", url.String())
+				res.WriteHeader(http.StatusFound)
+			}
+			failure := client.RedirectToFailurePage()
+			if failure != nil && code == "" {
+				url := failure.Url()
+				res.Header().Set("Location", url.String())
+				res.WriteHeader(http.StatusFound)
+			}
 
-		// Redirect to user-defined successful/failure page
-		successful := client.RedirectToSuccessfulPage()
-		if successful != nil && code != "" {
-			url := successful.Url()
-			res.Header().Set("Location", url.String())
-			res.WriteHeader(http.StatusFound)
-		}
-		failure := client.RedirectToFailurePage()
-		if failure != nil && code == "" {
-			url := failure.Url()
-			res.Header().Set("Location", url.String())
-			res.WriteHeader(http.StatusFound)
-		}
+			message := "Login "
+			if code != "" {
+				message += "successful"
+			} else {
+				message += "failed"
+			}
+			res.Header().Set("Cache-Control", "no-store")
+			res.Header().Set("Pragma", "no-cache")
+			res.WriteHeader(http.StatusOK)
+			_, e := res.Write([]byte(fmt.Sprintf("<!DOCTYPE html><body>%s</body></html>", message)))
+			if e != nil {
+				err <- e
+			}
 
-		message := "Login "
-		if code != "" {
-			message += "successful"
-		} else {
-			message += "failed"
-		}
-		res.Header().Set("Cache-Control", "no-store")
-		res.Header().Set("Pragma", "no-cache")
-		res.WriteHeader(http.StatusOK)
-		_, e := res.Write([]byte(fmt.Sprintf("<!DOCTYPE html><body>%s</body></html>", message)))
-		if e != nil {
-			err <- e
-		}
+			if f, ok := res.(http.Flusher); ok {
+				f.Flush()
+			}
 
-		if f, ok := res.(http.Flusher); ok {
-			f.Flush()
-		}
-
-		if code == "" {
-			err <- fmt.Errorf("failed to get code")
-		} else {
-			c <- code
-		}
+			if code == "" {
+				err <- fmt.Errorf("failed to get code")
+			} else {
+				c <- code
+			}
+		})
 	}
 }
 

@@ -28,7 +28,7 @@ func clearSecret(cmd *cobra.Command, args []string) error {
 	if err := ss.Clear(cmd.Context()); err != nil {
 		return fmt.Errorf("failed to clear the secret store: %w", err)
 	}
-	log.Write("The secret store has been cleared")
+	log.Writeln("The secret store has been cleared")
 
 	return nil
 }
