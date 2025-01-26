@@ -178,8 +178,6 @@ func (s *SecretStore) SaveAWSCredential(ctx context.Context, roleArn string, cre
 		return err
 	}
 
-	log.Write("The AWS credentials has been saved in OS secret store")
-
 	return nil
 }
 

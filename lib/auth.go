@@ -98,7 +98,7 @@ func Authenticate(ctx context.Context, client *OIDCClient, roleArn string, maxSe
 			if err := ss.SaveAWSCredential(ctx, roleArn, awsCreds); err != nil {
 				return err
 			}
-			log.Write("The AWS credentials has been saved in OS secret store")
+			log.Writeln("The AWS credentials have been saved in OS secret store")
 		}
 	}
 
