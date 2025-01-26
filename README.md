@@ -1,4 +1,4 @@
-# aws-cli-oidc
+# aws-cli-oidc [![Go Report Card Badge](https://goreportcard.com/badge/github.com/stensonb/aws-cli-oidc)](https://goreportcard.com/report/github.com/stensonb/aws-cli-oidc)
 
 CLI tool for retrieving AWS temporary credentials using an OIDC provider.
 
