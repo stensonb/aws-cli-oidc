@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.2
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.55
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.10
-	github.com/beevik/etree v1.4.1
+	github.com/beevik/etree v1.5.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/natsukagami/go-input v0.0.0-20180603034138-38bb793e9754
 	github.com/nirasan/go-oauth-pkce-code-verifier v0.0.0-20220510032225-4f9f17eaec4c
