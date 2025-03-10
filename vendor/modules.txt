@@ -13,8 +13,8 @@ github.com/PuerkitoBio/goquery
 # github.com/andybalholm/cascadia v1.3.3
 ## explicit; go 1.16
 github.com/andybalholm/cascadia
-# github.com/aws/aws-sdk-go-v2 v1.36.0
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2 v1.36.3
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/aws
 github.com/aws/aws-sdk-go-v2/aws/arn
 github.com/aws/aws-sdk-go-v2/aws/defaults
@@ -43,8 +43,8 @@ github.com/aws/aws-sdk-go-v2/internal/timeconv
 # github.com/aws/aws-sdk-go-v2/config v1.29.2
 ## explicit; go 1.21
 github.com/aws/aws-sdk-go-v2/config
-# github.com/aws/aws-sdk-go-v2/credentials v1.17.55
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/credentials v1.17.62
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/credentials
 github.com/aws/aws-sdk-go-v2/credentials/ec2rolecreds
 github.com/aws/aws-sdk-go-v2/credentials/endpointcreds
@@ -52,37 +52,37 @@ github.com/aws/aws-sdk-go-v2/credentials/endpointcreds/internal/client
 github.com/aws/aws-sdk-go-v2/credentials/processcreds
 github.com/aws/aws-sdk-go-v2/credentials/ssocreds
 github.com/aws/aws-sdk-go-v2/credentials/stscreds
-# github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.25
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.30
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds/internal/config
-# github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.29
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.34
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/internal/configsources
-# github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.29
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.34
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2
 # github.com/aws/aws-sdk-go-v2/internal/ini v1.8.2
 ## explicit; go 1.21
 github.com/aws/aws-sdk-go-v2/internal/ini
-# github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.2
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.3
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
-# github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.10
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.15
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
-# github.com/aws/aws-sdk-go-v2/service/sso v1.24.12
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/service/sso v1.25.1
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/sso
 github.com/aws/aws-sdk-go-v2/service/sso/internal/endpoints
 github.com/aws/aws-sdk-go-v2/service/sso/types
-# github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.11
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/service/ssooidc v1.29.1
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/ssooidc
 github.com/aws/aws-sdk-go-v2/service/ssooidc/internal/endpoints
 github.com/aws/aws-sdk-go-v2/service/ssooidc/types
-# github.com/aws/aws-sdk-go-v2/service/sts v1.33.10
-## explicit; go 1.21
+# github.com/aws/aws-sdk-go-v2/service/sts v1.33.17
+## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/service/sts
 github.com/aws/aws-sdk-go-v2/service/sts/internal/endpoints
 github.com/aws/aws-sdk-go-v2/service/sts/types
