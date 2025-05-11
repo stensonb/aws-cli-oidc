@@ -2,6 +2,7 @@ package lib
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -293,13 +294,22 @@ func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, err
 	challenge := v.CodeChallengeS256()
 	verifier := v.String()
 
+	// Generate a cryptographically secure random state parameter for OIDC
+	stateBytes := make([]byte, 16)
+	_, err = rand.Read(stateBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate state parameter: %w", err)
+	}
+	state := base64.RawURLEncoding.EncodeToString(stateBytes)
+
 	authReq := client.Authorization().
 		QueryParam("response_type", "code").
 		QueryParam("client_id", clientId).
 		QueryParam("redirect_uri", redirect).
 		QueryParam("code_challenge", challenge).
 		QueryParam("code_challenge_method", "S256").
-		QueryParam("scope", "openid")
+		QueryParam("scope", "openid").
+		QueryParam("state", state)
 
 	additionalQuery := client.config.GetString(config.OIDC_AUTHENTICATION_REQUEST_ADDITIONAL_QUERY)
 
@@ -316,7 +326,7 @@ func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, err
 
 	launchUrl := authReq.Url()
 
-	code, err := launch(ctx, client, launchUrl.String(), listener)
+	code, err := launch(ctx, client, launchUrl.String(), state, listener)
 	if err != nil {
 		return nil, fmt.Errorf("login failed, can't retrieve authorization code: %w", err)
 	}
@@ -326,7 +336,7 @@ func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, err
 
 var m sync.Mutex
 
-func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.ResponseWriter, req *http.Request) {
+func buildHandler(client *OIDCClient, expectedState string, c codeChan, err errChan) func(res http.ResponseWriter, req *http.Request) {
 	return func(res http.ResponseWriter, req *http.Request) {
 		// lock here to only handle requests serially (and only once)
 		defer m.Unlock()
@@ -335,6 +345,11 @@ func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.Res
 		url := req.URL
 		q := url.Query()
 		code := q.Get("code")
+		state := q.Get("state")
+		if state != expectedState {
+			err <- fmt.Errorf("state mismatch: expected '%v', got '%v'", expectedState, state)
+			code = ""
+		}
 
 		res.Header().Set(ContentType, "text/html")
 
@@ -381,7 +396,7 @@ func buildHandler(client *OIDCClient, c codeChan, err errChan) func(res http.Res
 type codeChan chan string
 type errChan chan error
 
-func launch(ctx context.Context, client *OIDCClient, url string, listener net.Listener) (string, error) {
+func launch(ctx context.Context, client *OIDCClient, url, expectedState string, listener net.Listener) (string, error) {
 	loginCtx, loginCancel := context.WithTimeout(ctx, 3*time.Minute) // TODO: make login timeout configurable
 	defer loginCancel()
 
@@ -389,7 +404,7 @@ func launch(ctx context.Context, client *OIDCClient, url string, listener net.Li
 	e := make(chan error, 2) // could get errors from handler and/or http server
 
 	srv := &http.Server{}
-	http.HandleFunc("/", buildHandler(client, c, e))
+	http.HandleFunc("/", buildHandler(client, expectedState, c, e))
 
 	go func() {
 		defer func() {
@@ -401,6 +416,7 @@ func launch(ctx context.Context, client *OIDCClient, url string, listener net.Li
 		}
 	}()
 
+	log.Traceln("Opening browser to: %s", url)
 	err := browser.OpenURL(url)
 	if err != nil {
 		return "", fmt.Errorf("failed to openurl: %w", err)
