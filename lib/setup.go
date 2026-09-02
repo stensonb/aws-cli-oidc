@@ -62,6 +62,24 @@ func RunSetup(ui *input.UI) error {
 		return err
 	}
 
+	localServerPort, err := ui.Ask("Fixed local port to listen on for the login redirect (Default: random free port each time):", &input.Options{
+		Default:  "",
+		Required: false,
+		ValidateFunc: func(s string) error {
+			if s == "" {
+				return nil
+			}
+			i, err := strconv.ParseInt(s, 10, 32)
+			if err != nil || i < 1 || i > 65535 {
+				return fmt.Errorf("must be a port number 1-65535, or blank")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+
 	clientID, err := ui.Ask("Client ID which is registered in the OIDC provider:", &input.Options{
 		Loop:     true,
 		Required: true,
@@ -182,6 +200,7 @@ func RunSetup(ui *input.UI) error {
 		config.OIDC_AUTHENTICATION_REQUEST_ADDITIONAL_QUERY: additionalQuery,
 		config.SUCCESSFUL_REDIRECT_URL:                      successfulRedirectURL,
 		config.FAILURE_REDIRECT_URL:                         failureRedirectURL,
+		config.LOCAL_SERVER_PORT:                            localServerPort,
 		config.CLIENT_ID:                                    clientID,
 		config.CLIENT_SECRET:                                clientSecret,
 		config.CLIENT_AUTH_CERT:                             clientAuthCert,
