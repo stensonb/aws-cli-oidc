@@ -24,6 +24,8 @@ const INSECURE_SKIP_VERIFY = "insecure_skip_verify"
 const AWS_FEDERATION_TYPE = "aws_federation_type"
 const MAX_SESSION_DURATION_SECONDS = "max_session_duration_seconds"
 const DEFAULT_IAM_ROLE_ARN = "default_iam_role_arn"
+const STS_ENDPOINT = "sts_endpoint"
+const AWS_REGION = "aws_region"
 
 // OIDC config
 const AWS_FEDERATION_ROLE_SESSION_NAME = "aws_federation_role_session_name"

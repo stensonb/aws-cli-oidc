@@ -86,7 +86,7 @@ func Authenticate(ctx context.Context, client *OIDCClient, roleArn string, maxSe
 				return fmt.Errorf("failed to create SAML Response: %w", err)
 			}
 
-			awsCreds, err = GetCredentialsWithSAML(ctx, samlResponse, maxSessionDurationSeconds, roleArn)
+			awsCreds, err = GetCredentialsWithSAML(ctx, client, samlResponse, maxSessionDurationSeconds, roleArn)
 			if err != nil {
 				return fmt.Errorf("failed to get AWS credentials with SAML2: %w", err)
 			}
