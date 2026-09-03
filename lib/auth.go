@@ -57,6 +57,12 @@ func Authenticate(ctx context.Context, client *OIDCClient, roleArn string, maxSe
 
 		log.Writeln("Login successful!")
 		log.Traceln("ID token: %s", tokenResponse.IDToken)
+		if header, err := DecodeJWTHeader(tokenResponse.IDToken); err == nil {
+			log.Traceln("ID token header: %s", header)
+		}
+		if claims, err := DecodeJWTClaims(tokenResponse.IDToken); err == nil {
+			log.Traceln("ID token claims: %s", claims)
+		}
 
 		awsFedType := client.config.GetString(config.AWS_FEDERATION_TYPE)
 
