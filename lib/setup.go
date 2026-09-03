@@ -62,6 +62,22 @@ func RunSetup(ui *input.UI) error {
 		return err
 	}
 
+	stsEndpoint, err := ui.Ask("Custom STS endpoint URL, for an AWS-API-compatible service such as VAST Data (Default: use real AWS STS):", &input.Options{
+		Default:  "",
+		Required: false,
+	})
+	if err != nil {
+		return err
+	}
+
+	awsRegion, err := ui.Ask("AWS region to use for STS requests (Default: us-east-1 if a custom STS endpoint is set, otherwise the SDK default):", &input.Options{
+		Default:  "",
+		Required: false,
+	})
+	if err != nil {
+		return err
+	}
+
 	clientID, err := ui.Ask("Client ID which is registered in the OIDC provider:", &input.Options{
 		Loop:     true,
 		Required: true,
@@ -182,6 +198,8 @@ func RunSetup(ui *input.UI) error {
 		config.OIDC_AUTHENTICATION_REQUEST_ADDITIONAL_QUERY: additionalQuery,
 		config.SUCCESSFUL_REDIRECT_URL:                      successfulRedirectURL,
 		config.FAILURE_REDIRECT_URL:                         failureRedirectURL,
+		config.STS_ENDPOINT:                                 stsEndpoint,
+		config.AWS_REGION:                                   awsRegion,
 		config.CLIENT_ID:                                    clientID,
 		config.CLIENT_SECRET:                                clientSecret,
 		config.CLIENT_AUTH_CERT:                             clientAuthCert,

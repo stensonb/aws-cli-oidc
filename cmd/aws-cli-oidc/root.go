@@ -21,7 +21,10 @@ func Execute() {
 	}
 }
 
+var debug bool
+
 func init() {
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "v", false, "Print verbose debug output, including the ID token, SAML assertion, and STS request/response details")
 	cobra.OnInitialize(initConfig)
 }
 
@@ -32,5 +35,5 @@ func initConfig() {
 		log.Writeln("Using config file: %s", viper.ConfigFileUsed())
 	}
 
-	log.IsTraceEnabled = false // TODO: configurable
+	log.IsTraceEnabled = debug
 }

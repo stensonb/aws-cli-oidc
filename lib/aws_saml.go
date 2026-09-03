@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	input "github.com/natsukagami/go-input"
 	"github.com/stensonb/aws-cli-oidc/lib/log"
@@ -18,7 +17,7 @@ import (
 	"github.com/versent/saml2aws"
 )
 
-func GetCredentialsWithSAML(ctx context.Context, samlResponse string, durationSeconds int32, iamRoleArn string) (*types.AWSCredentials, error) {
+func GetCredentialsWithSAML(ctx context.Context, client *OIDCClient, samlResponse string, durationSeconds int32, iamRoleArn string) (*types.AWSCredentials, error) {
 	role, err := selectAwsRole(samlResponse, iamRoleArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assume role, please check you are permitted to assume the given role for the AWS service: %w", err)
@@ -27,7 +26,7 @@ func GetCredentialsWithSAML(ctx context.Context, samlResponse string, durationSe
 	log.Writeln("Selected role: %s", role.RoleARN)
 	log.Writeln("Max Session Duration: %d seconds", durationSeconds)
 
-	return loginToStsUsingRole(ctx, role, samlResponse, durationSeconds)
+	return loginToStsUsingRole(ctx, client, role, samlResponse, durationSeconds)
 }
 
 func selectAwsRole(samlResponse, iamRoleArn string) (*saml2aws.AWSRole, error) {
@@ -122,7 +121,7 @@ func promptForAWSRoleSelection(awsRoles []*saml2aws.AWSRole, iamRoleArn string) 
 	return roles[roleOptions[i-1]], nil
 }
 
-func loginToStsUsingRole(ctx context.Context, role *saml2aws.AWSRole, samlResponse string, durationSeconds int32) (*types.AWSCredentials, error) {
+func loginToStsUsingRole(ctx context.Context, client *OIDCClient, role *saml2aws.AWSRole, samlResponse string, durationSeconds int32) (*types.AWSCredentials, error) {
 	log.Traceln("SAMLReponse: %s", samlResponse)
 
 	b := base64.StdEncoding.EncodeToString([]byte(samlResponse))
@@ -131,7 +130,7 @@ func loginToStsUsingRole(ctx context.Context, role *saml2aws.AWSRole, samlRespon
 	loginCtx, loginCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer loginCancel()
 
-	cfg, err := config.LoadDefaultConfig(loginCtx)
+	cfg, err := newSTSConfig(loginCtx, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load credentials: %w", err)
 	}
@@ -152,6 +151,7 @@ func loginToStsUsingRole(ctx context.Context, role *saml2aws.AWSRole, samlRespon
 
 	resp, err := svc.AssumeRoleWithSAML(loginCtx, params)
 	if err != nil {
+		traceSTSError(err)
 		return nil, fmt.Errorf("failed to retrieve STS credentials using SAML: %w", err)
 	}
 
