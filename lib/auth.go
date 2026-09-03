@@ -278,8 +278,14 @@ func createSAMLResponse(samlAssertion string) (string, error) {
 
 func doLogin(ctx context.Context, client *OIDCClient) (*types.TokenResponse, error) {
 	// TODO: make ip address configurable
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:", LocalhostIPAddress))
+	// Bind to a fixed local port if one is configured (local_server_port),
+	// otherwise fall back to letting the OS assign a free ephemeral port.
+	bindPort := client.config.GetString(config.LOCAL_SERVER_PORT)
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%s", LocalhostIPAddress, bindPort))
 	if err != nil {
+		if bindPort != "" {
+			return nil, fmt.Errorf("cannot start local http server on configured port %s to handle login redirect: %w", bindPort, err)
+		}
 		return nil, fmt.Errorf("cannot start local http server to handle login redirect: %w", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
